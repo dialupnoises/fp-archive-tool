@@ -35,8 +35,7 @@ exports.threads = function(_threads) {
 exports.post = function(post) {
 	var prefix = path.join(output, 'thread' + thread_ids_to_versions[post.thread]);
 	var dir = path.join(prefix, 'page' + post.page);
-	console.log('Writing post ' + post.number);
 	if(!fs.existsSync(dir))
 		fs.mkdirSync(dir);
-	fs.writeFile(path.join(dir, 'post' + post.number + '.json'), post, function(err) { if(err) throw err; });
+	fs.writeFile(path.join(dir, 'post' + post.number + '.json'), JSON.stringify(post), function(err) { if(err) throw err; });
 }

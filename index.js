@@ -14,10 +14,13 @@ License:
 */
 var commander = require('commander'), // command line arguments
     fs        = require('fs'),
+    qs        = require('querystring'),
     colors    = require('colors'),
-    request   = require('request'),   // http requests
+    Mimicry   = require('mimicry'),   // http requests, with cookie
     cheerio   = require('cheerio'),   // jquery wrapper (easy HTML parsing)
     moment    = require('moment');    // date parsing & formatting
+
+var mimicry = new Mimicry();
 
 commander
     .version('0.1.0')
@@ -117,90 +120,133 @@ Object.keys(threads).forEach(function(k) {
     // extract the thread ID, so we can properly make requests
     var threadID = thread_regex.exec(thread)[1];
     // check how many pages it has
-    request('http://facepunch.com/showthread.php?t=' + threadID, function(err, res, body) {
-        if(err || res.statusCode != 200)
-            displayErrorAndDie('Error: unable to check page count - possibly CloudFlare related.'); // todo: ~smooth~ error handling
-        var $ = cheerio.load(body);
-        var page_txt = $('.popupctrl').first().text();
-        var max_page = 1;
-        if(page_txt != "") // page nav control found
-            max_page = parseInt(/Page \d+ of (\d+)/.exec(page_txt)[1]); // mmm, regex
-        // then, for each page
-        for(var i=1;i<max_page+1;i++)
-            request('http://facepunch.com/showthread.php?t=' + threadID + '&page=' + i, function(err, res, body) {
-                if(err) 
-                    displayErrorAndDie('Error: unable to fetch page.');
-                // iterate over every post
-                $('.postcontainer').each(function(i, post) {
-                    var _$ = $(post);
-                    var date_txt = _$.find('.date').text();
-                    var date;
-                    // if the thread has been posted in in the last month, they'll be "ago" dates, otherwise:
-                    if(date_txt.indexOf('Ago') == -1)
-                        date = moment(date_txt, 'Do MMMM YYYY').unix(); // using moment to convert it to unix time, ~YOLO~
-                    else
-                    {
-                        // create a new moment of today, then subtract the date from it
-                        var m = moment();
-                        // for example, "4 weeks ago" would turn into m.subtract("weeks", 4)
-                        m.subtract(date.split(' ')[1], parseInt(date.split(' ')[0]));
-                        date = m.unix();
-                    }
-                    // post number (i.e. "Post #2")
-                    var post_number = _$.find('.postcounter').text().trim().substr(6);
-                    // post ID (the part that comes in the &p=numbers part of the URL)
-                    var post_id = /&p=(\d+)/.exec(_$.find('.postcounter').attr('href'))[1]
-                    var username = _$.find('.username').text();
-                    // determine the user type
-                    var user_type = 'blue';
-                    if(_$.find('.username font').attr('color') == '#A06000')
-                        user_type = 'gold';
-                    if(_$.find('.username span').attr('style').indexOf('#00aa00') != -1)
-                        user_type = 'mod';
-                    var content = _$.find('.postcontent').html().trim();
-                    // for searching: no quotes or tags
-                    _$.find('.postcontent .quote').remove();
-                    var sanitized_content = _$.find('.postcontent').text();
-                    // put ratings into a nice object
-                    var ratings = {};
-                    _$.find('.rating_results span').each(function(i, r) {
-                        ratings[$(r).find('img').attr('alt').replace(/ /, '_').toLowerCase()] = parseInt($(r).find('strong').text());
-                    });
-                    // finally, user agent stuff
-                    var userinfo = { os: 'Unknown', browser: 'Unknown' };
-                    if(_$.find('.postlinking img').length >= 4) // both OS and browser (and maybe flagdog)
-                    {
-                        userinfo.os = _$.find('.postlinking img').first().attr('alt');
-                        userinfo.browser = _$.find('.postlinking img').get(1).attr('alt');
-                    }
-                    else // just OS, or unknown
-                        userinfo.os = _$.find('.postlinking img').first().attr('alt');
-                    // flagdog, if possible
-                    if(_$.find('.postlinking img').get(2).attr('src').indexOf('flags') != -1)
-                        userinfo.country = _$.find('.postlinking img').get(2).attr('alt');
-
-                    // i forgot how javascript scopes work and i don't remember if threadID still exists in this scope
-                    // as it was when this callback was created, so better safe than sorry i guess
-                    var threadID = parseInt(/showthread\.php.+?t=(\d+)/.exec(body)[1]);
-
-                    // now, we've collected all the data, send it to the output plugin for processing
-                    plugin.post({
-                        thread: threadID,
-                        page: i,
-                        author: {
-                            name: username,
-                            info: userinfo, // i'm noticing some inconsistencies in naming here
-                            type: user_type
-                        },
-                        date: date,
-                        number: post_number,
-                        id: post_id,
-                        content: content,
-                        sanitized_content: sanitized_content,
-                        ratings: ratings
-                    });
-                });
-            });
-    });
+    startParsing(threadID);
 });
 
+// times gone through cloudflare; if more than one, stop!
+var cloudflareCount = 0;
+
+function startParsing(threadID, form)
+{   
+    if(form)
+        mimicry.get('http://facepunch.com/cdn-cgi/l/chk_jschl?' + qs.stringify(form), { 'Referer': 'http://facepunch.com/showthread.php?t=' + threadID}, parse);
+    else
+        mimicry.get('http://facepunch.com/showthread.php?t=' + threadID, parse);
+    function parse(err, body, headers) {
+        if(/<title>Just a moment...<\/title>/.test(body))
+            cloudflareChallenge(body, function(data) { startParsing(threadID, data); });
+        else if(err)
+            displayErrorAndDie('Error: unable to check page count - possibly CloudFlare related.'); // todo: ~smooth~ error handling
+        else
+        {
+            var $ = cheerio.load(body);
+            var page_txt = $('.popupctrl').first().text();
+            var max_page = 1;
+            if(page_txt != "") // page nav control found
+                max_page = parseInt(/Page \d+ of (\d+)/.exec(page_txt)[1]); // mmm, regex
+            // then, for each page
+            for(var i=1;i<max_page+1;i++)
+            {
+                mimicry.get('http://facepunch.com/showthread.php?t=' + threadID + '&page=' + i, function(err, body) {
+                    if(err) 
+                        displayErrorAndDie('Error: unable to fetch page.');
+                    var page = 1;
+                    if(parseInt(/Page \d+ of (\d+)/.test(page_txt))) // get the page number, if it exists
+                        page = parseInt(/Page (\d+) of \d+/.exec(body)[1]);
+                    // iterate over every post
+                    $('.postcontainer').each(function(_, post) {
+                        var _$ = $(post);
+                        var date_txt = _$.find('.date').text();
+                        var date;
+                        // if the thread has been posted in in the last month, they'll be "ago" dates, otherwise:
+                        if(date_txt.indexOf('Ago') == -1)
+                            date = moment(date_txt, 'Do MMMM YYYY').unix(); // using moment to convert it to unix time, ~YOLO~
+                        else
+                        {
+                            // create a new moment of today, then subtract the date from it
+                            var m = moment();
+                            // for example, "4 weeks ago" would turn into m.subtract("weeks", 4)
+                            m.subtract(date.split(' ')[1], parseInt(date.split(' ')[0]));
+                            date = m.unix();
+                        }
+                        // post number (i.e. "Post #2")
+                        var post_number = _$.find('.postcounter').text().trim().substr(6);
+                        // post ID (the part that comes in the &p=numbers part of the URL)
+                        var post_id = /&p=(\d+)/.exec(_$.find('.postcounter').attr('href'))[1]
+                        var username = _$.find('.username').text();
+                        // determine the user type
+                        var user_type = 'blue';
+                        if(_$.find('.username font').attr('color') == '#A06000')
+                            user_type = 'gold';
+                        if(_$.find('.username span').attr('style') && _$.find('.username span').attr('style').indexOf('#00aa00') != -1)
+                            user_type = 'mod';
+                        var content = _$.find('.postcontent').html().trim();
+                        // for searching: no quotes or tags
+                        _$.find('.postcontent .quote').remove();
+                        var sanitized_content = _$.find('.postcontent').text().trim();
+                        // put ratings into a nice object
+                        var ratings = {};
+                        _$.find('.rating_results span').each(function(i, r) {
+                            ratings[$(r).find('img').attr('alt').replace(/ /, '_').toLowerCase()] = parseInt($(r).find('strong').text());
+                        });
+                        // finally, user agent stuff
+                        var userinfo = { os: 'Unknown', browser: 'Unknown' };
+                        if(_$.find('.postlinking img').length >= 4) // both OS and browser (and maybe flagdog)
+                        {
+                            userinfo.os = _$.find('.postlinking img').first().attr('alt');
+                            userinfo.browser = /\/fp\/browser\/(.+?)\.png/.exec($(_$.find('.postlinking img').get(1)).attr('src'))[1].capitalize();
+                        }
+                        else // just OS, or unknown
+                            userinfo.os = _$.find('.postlinking img').first().attr('alt');
+                        var flag = _$.find('.postlinking img').get(2);
+                        // flagdog, if possible
+                        if($(flag).attr('src') && $(flag).attr('src').indexOf('flags') != -1)
+                            userinfo.country = $(flag).attr('alt');
+
+                        // i forgot how javascript scopes work and i don't remember if threadID still exists in this scope
+                        // as it was when this callback was created, so better safe than sorry i guess
+                        var threadID = parseInt(/showthread\.php.+?t=(\d+)/.exec(body)[1]);
+
+                        // now, we've collected all the data, send it to the output plugin for processing
+                        plugin.post({
+                            thread: threadID,
+                            page: page,
+                            author: {
+                                name: username,
+                                info: userinfo, // i'm noticing some inconsistencies in naming here
+                                type: user_type
+                            },
+                            date: date,
+                            number: post_number,
+                            id: post_id,
+                            content: content,
+                            sanitized_content: sanitized_content,
+                            ratings: ratings
+                        });
+                    });
+                });
+            }
+        }    
+    }
+}
+
+function cloudflareChallenge(body, callback) 
+{
+    cloudflareCount++;
+    if(cloudflareCount > 1)
+        displayErrorAndDie('Error: cannot get around CloudFlare.');
+    // match the challenge, but not the second part (the part that includes parseInt)
+    var challenge = eval(/a\.value = (.+?);/.exec(body)[1]);
+    // add t.length (domain) to the challenge
+    challenge += 'facepunch.com'.length;
+    // get the other part of the challenge
+    var vc = /type="hidden" name="jschl_vc" value="(.+?)"\/>/.exec(body)[1];
+    callback({
+        jschl_vc: vc,
+        jschl_answer: challenge
+    });
+}
+
+String.prototype.capitalize = function() {
+    return this.charAt(0).toUpperCase() + this.slice(1);
+}
