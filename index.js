@@ -88,7 +88,7 @@ else // thread file
 {
     if(!fs.existsSync(commander.file))
         displayErrorAndDie('Input file does not exist.');
-    fs.readFileSync(commander.file).split('\n').forEach(function(l) {
+    fs.readFileSync(commander.file, {encoding: 'utf8'}).split('\n').forEach(function(l) {
         var parts = l.split(' ');
         if(parts.length != 2 || isNaN(parts[0]))
             displayErrorAndDie('Error: invalid input file format (see README).');
@@ -123,9 +123,6 @@ Object.keys(threads).forEach(function(k) {
     startParsing(threadID);
 });
 
-// times gone through cloudflare; if more than one, stop!
-var cloudflareCount = 0;
-
 function startParsing(threadID, form)
 {   
     if(form)
@@ -150,9 +147,8 @@ function startParsing(threadID, form)
                 mimicry.get('http://facepunch.com/showthread.php?t=' + threadID + '&page=' + i, function(err, body) {
                     if(err) 
                         displayErrorAndDie('Error: unable to fetch page.');
-                    var page = 1;
-                    if(parseInt(/Page \d+ of (\d+)/.test(page_txt))) // get the page number, if it exists
-                        page = parseInt(/Page (\d+) of \d+/.exec(body)[1]);
+                    var $ = cheerio.load(body);
+                    var multiplePages = /Page (\d+) of \d+/.test(page_txt);
                     // iterate over every post
                     $('.postcontainer').each(function(_, post) {
                         var _$ = $(post);
@@ -166,7 +162,7 @@ function startParsing(threadID, form)
                             // create a new moment of today, then subtract the date from it
                             var m = moment();
                             // for example, "4 weeks ago" would turn into m.subtract("weeks", 4)
-                            m.subtract(date.split(' ')[1], parseInt(date.split(' ')[0]));
+                            m.subtract(date_txt.split(' ')[1].toLowerCase(), parseInt(date_txt.split(' ')[0]));
                             date = m.unix();
                         }
                         // post number (i.e. "Post #2")
@@ -194,7 +190,9 @@ function startParsing(threadID, form)
                         if(_$.find('.postlinking img').length >= 4) // both OS and browser (and maybe flagdog)
                         {
                             userinfo.os = _$.find('.postlinking img').first().attr('alt');
-                            userinfo.browser = /\/fp\/browser\/(.+?)\.png/.exec($(_$.find('.postlinking img').get(1)).attr('src'))[1].capitalize();
+                            // if flagdog isn't second
+                            if($(_$.find('.postlinking img').get(1)).attr('src').indexOf('flags') == -1)
+                                userinfo.browser = /\/fp\/browser\/(.+?)\.png/.exec($(_$.find('.postlinking img').get(1)).attr('src'))[1].capitalize();
                         }
                         else // just OS, or unknown
                             userinfo.os = _$.find('.postlinking img').first().attr('alt');
@@ -210,7 +208,7 @@ function startParsing(threadID, form)
                         // now, we've collected all the data, send it to the output plugin for processing
                         plugin.post({
                             thread: threadID,
-                            page: page,
+                            page: multiplePages ? parseInt(/Page (\d+) of \d+/.exec(body)[1]) : 1,
                             author: {
                                 name: username,
                                 info: userinfo, // i'm noticing some inconsistencies in naming here
@@ -232,9 +230,6 @@ function startParsing(threadID, form)
 
 function cloudflareChallenge(body, callback) 
 {
-    cloudflareCount++;
-    if(cloudflareCount > 1)
-        displayErrorAndDie('Error: cannot get around CloudFlare.');
     // match the challenge, but not the second part (the part that includes parseInt)
     var challenge = eval(/a\.value = (.+?);/.exec(body)[1]);
     // add t.length (domain) to the challenge
