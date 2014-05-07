@@ -32,10 +32,10 @@ exports.threads = function(_threads) {
 	});
 }
 
-exports.post = function(post) {
+exports.post = function(post, callback) {
 	var prefix = path.join(output, 'thread' + thread_ids_to_versions[post.thread]);
 	var dir = path.join(prefix, 'page' + post.page);
 	if(!fs.existsSync(dir))
 		fs.mkdirSync(dir);
-	fs.writeFile(path.join(dir, 'post' + post.number + '.json'), JSON.stringify(post), function(err) { if(err) throw err; });
+	fs.writeFile(path.join(dir, 'post' + post.number + '.json'), JSON.stringify(post), function(err) { if(err) throw err; callback(); });
 }

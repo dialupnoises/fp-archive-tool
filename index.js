@@ -123,6 +123,8 @@ Object.keys(threads).forEach(function(k) {
     startParsing(threadID);
 });
 
+var postsProcessed = 0;
+
 function startParsing(threadID, form)
 {   
     if(form)
@@ -220,7 +222,7 @@ function startParsing(threadID, form)
                             content: content,
                             sanitized_content: sanitized_content,
                             ratings: ratings
-                        });
+                        }, function() { postsProcessed++; displayFancy(postsProcessed + ' posts processed.'); });
                     });
                 });
             }
@@ -244,4 +246,11 @@ function cloudflareChallenge(body, callback)
 
 String.prototype.capitalize = function() {
     return this.charAt(0).toUpperCase() + this.slice(1);
+}
+
+function displayFancy(txt)
+{
+    process.stdout.clearLine();
+    process.stdout.cursorTo(0);
+    process.stdout.write(txt);
 }
