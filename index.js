@@ -34,7 +34,7 @@ commander
     .option('-o, --output [value]', 'output directory, if required by the plugin')
     // output database, if the plugin uses it
     .option('-db, --database [value]', 'output database, if required by the plugin (see README)')
-    // list output plugins
+    // list plugins
     .option('--plugins', 'list output plugins (all other options ignored)')
     .parse(process.argv);
 
@@ -61,9 +61,10 @@ if(commander.plugins)
     process.exit();
 }
 
-function displayErrorAndDie(msg)
+function displayErrorAndDie(msg, showhelp)
 {
-    commander.outputHelp();
+    if(showhelp == undefined || showhelp)
+        commander.outputHelp();
     console.log(msg.red);
     process.exit();
 }
@@ -105,7 +106,7 @@ Object.keys(threads).forEach(function(k) {
 // initialize the plugin
 var plugin = Tool.Plugins[commander.plugin];
 var err = plugin.initialize(commander); // done synchronously because lazy
-if(err) displayErrorAndDie(err);
+if(err) displayErrorAndDie(err, false);
 console.log(('Successfully initialized ' + plugin.name).grey);
 
 // need to be sure it's set, otherwise dates won't parse correctly
@@ -135,7 +136,7 @@ function startParsing(threadID, form)
         if(/<title>Just a moment...<\/title>/.test(body))
             cloudflareChallenge(body, function(data) { startParsing(threadID, data); });
         else if(err)
-            displayErrorAndDie('Error: unable to check page count - possibly CloudFlare related.'); // todo: ~smooth~ error handling
+            displayErrorAndDie('Error: unable to check page count - possibly CloudFlare related.', false); // todo: ~smooth~ error handling
         else
         {
             var $ = cheerio.load(body);
@@ -148,7 +149,7 @@ function startParsing(threadID, form)
             {
                 mimicry.get('http://facepunch.com/showthread.php?t=' + threadID + '&page=' + i, function(err, body) {
                     if(err) 
-                        displayErrorAndDie('Error: unable to fetch page.');
+                        displayErrorAndDie('Error: unable to fetch page.', false);
                     var $ = cheerio.load(body);
                     var multiplePages = /Page (\d+) of \d+/.test(page_txt);
                     // iterate over every post
