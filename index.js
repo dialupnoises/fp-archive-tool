@@ -134,7 +134,10 @@ function startParsing(threadID, form)
         mimicry.get('http://facepunch.com/showthread.php?t=' + threadID, parse);
     function parse(err, body, headers) {
         if(/<title>Just a moment...<\/title>/.test(body))
-            cloudflareChallenge(body, function(data) { startParsing(threadID, data); });
+            cloudflareChallenge(body, function(data) { 
+                console.log('Bypassed cloudflare. If you see this a lot, something\'s wrong!'.green);
+                startParsing(threadID, data); 
+            });
         else if(err)
             displayErrorAndDie('Error: unable to check page count - possibly CloudFlare related.', false); // todo: ~smooth~ error handling
         else
@@ -144,6 +147,7 @@ function startParsing(threadID, form)
             var max_page = 1;
             if(page_txt != "") // page nav control found
                 max_page = parseInt(/Page \d+ of (\d+)/.exec(page_txt)[1]); // mmm, regex
+            console.log('Found ' + max_page + ' total pages for ' + threadID);
             // then, for each page
             for(var i=1;i<max_page+1;i++)
             {
@@ -233,8 +237,12 @@ function startParsing(threadID, form)
 
 function cloudflareChallenge(body, callback) 
 {
-    // match the challenge, but not the second part (the part that includes parseInt)
-    var challenge = eval(/a\.value = (.+?);/.exec(body)[1]);
+    // cloudflare's gettin crafty on us
+    var o1 = /setTimeout\(function\(\)\{\s+?var.+?\s(.+?;)/.exec(body)[1];
+    var o2 = /challenge-form'\);\s+;(.+?)\w.value/.exec(body)[1];
+    var or = /parseInt\((.+?),/.exec(body)[1];
+    var challenge = 0;
+    eval(o1 + o2 + '; challenge = parseInt(' + or + ');');
     // add t.length (domain) to the challenge
     challenge += 'facepunch.com'.length;
     // get the other part of the challenge
